@@ -1,6 +1,7 @@
 // =============================================================================
-// KART LEGENDS: ULTIMATE ARCADE ENGINE (V5.0 - PROFESSIONAL)
+// KART LEGENDS: ULTIMATE ARCADE ENGINE (V6.0 - FINAL GOLD)
 // ARQUITETO: SENIOR GAME DEV
+// FEATURES: FÍSICA DRIFT, CARROS 3D, GESTO TURBO, MINIMAPA REAL
 // =============================================================================
 
 (function() {
@@ -477,13 +478,13 @@
         },
 
         drawSprite: function(ctx, s) {
-            const size = s.scale * w * 1.5; // Tamanho base escalado
+            const size = s.scale * window.innerWidth * 1.5; // Tamanho base escalado
             const x = s.x; const y = s.y;
             
             if (s.type === 'kart') {
                 const k = s.obj;
                 const spec = CAR_SPECS[k.charId||0];
-                this.draw3DCar(ctx, x, y, s.scale * w * 0.003, spec.color, 0, 0); // Rival sem tilt complexo
+                this.draw3DCar(ctx, x, y, s.scale * window.innerWidth * 0.003, spec.color, 0, 0); // Rival sem tilt complexo
                 // Nome
                 ctx.fillStyle = '#fff'; ctx.font='10px Arial'; ctx.textAlign='center';
                 ctx.fillText('P2', x, y - size*0.05);
