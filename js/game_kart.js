@@ -1,7 +1,7 @@
 // =============================================================================
-// KART LEGENDS: ULTIMATE ARCADE ENGINE (V6.0 - FINAL GOLD)
+// KART LEGENDS: ULTIMATE ARCADE ENGINE (V7.0 - FINAL GOLD)
 // ARQUITETO: SENIOR GAME DEV
-// FEATURES: FÍSICA DRIFT, CARROS 3D, GESTO TURBO, MINIMAPA REAL
+// FEATURES: FÍSICA DRIFT, CARROS 3D SPRITES, GESTO TURBO, MINIMAPA REAL
 // =============================================================================
 
 (function() {
@@ -32,15 +32,15 @@
         SEGMENT_LENGTH: 200,
         RUMBLE_LENGTH: 3,
         ROAD_WIDTH: 2000,
-        CAMERA_HEIGHT: 1200, // Altura perfeita para ver a pista
-        CAMERA_DEPTH: 0.8,   // Campo de visão
+        CAMERA_HEIGHT: 1000, // Altura perfeita para ver a pista
+        CAMERA_DEPTH: 0.84,   // Campo de visão
         DRAW_DISTANCE: 300,
         MAX_SPEED: 260,
         ACCEL: 1.2,
         BREAKING: 3.0,
         DECEL: 0.98,
         OFFROAD_DECEL: 0.94,
-        CENTRIFUGAL: 0.3
+        CENTRIFUGAL: 0.35 // Aumentado para sentir a curva
     };
 
     // -----------------------------------------------------------------
@@ -103,9 +103,9 @@
                 // Props (Decoração)
                 let sprites = [];
                 // Lógica de spawn de props baseada no tema
-                if (Math.random() > 0.95) {
+                if (Math.random() > 0.92) {
                     const side = Math.random() > 0.5 ? 1 : -1;
-                    const dist = 3 + Math.random()*5;
+                    const dist = 2.5 + Math.random()*4;
                     const type = trk.theme === 'city' ? (Math.random()>0.5?'pole':'billboard') 
                                : trk.theme === 'sand' ? 'cactus' 
                                : 'tree';
