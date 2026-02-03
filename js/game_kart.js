@@ -795,3 +795,5 @@
             camOpacity: 0.15, showWheel: true
         });
     }
+
+})();
