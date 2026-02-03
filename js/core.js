@@ -48,7 +48,12 @@ window.System = {
     playerId: 'Player_' + Math.floor(Math.random() * 9999),
 
     init: async () => {
-        const loadingText = document.getElementById('loading-text');
+        // CORREÇÃO: Tentar pegar o elemento, se não existir, cria um dummy para não quebrar
+        let loadingText = document.getElementById('loading-text');
+        if (!loadingText) {
+             loadingText = { innerText: "" }; // Mock object para evitar crash
+        }
+
         window.System.canvas = document.getElementById('game-canvas');
         window.System.resize();
         window.addEventListener('resize', window.System.resize);
