@@ -1,7 +1,6 @@
 // =============================================================================
-// KART DO OTTO – ULTIMATE V14 (FIX CRÍTICO: ERRO DE RAIO NEGATIVO + CAM)
+// KART DO OTTO – ULTIMATE V16 (ORÁCULO TUNING EDITION - PESO & INÉRCIA)
 // =============================================================================
-
 
 (function() {
 
@@ -21,32 +20,30 @@
     ];
 
     const CONF = {
-  SPEED: 120,
-  MAX_SPEED: 200,
-  TURBO_MAX_SPEED: 280,
-  FRICTION: 0.97,
-  OFFROAD_DECEL: 0.96,
-  CENTRIFUGAL_FORCE: 0.28,
+        SPEED: 120,
+        MAX_SPEED: 210,
+        TURBO_MAX_SPEED: 290,
+        FRICTION: 0.98,            // Inércia: quão devagar ele para
+        OFFROAD_DECEL: 0.94,
+        CENTRIFUGAL_FORCE: 0.35,   // Força que puxa pra fora
+        CAMERA_DEPTH: 0.84,
+        CAMERA_HEIGHT: 1000,
+        ROAD_WIDTH: 2000,
+        SEGMENT_LENGTH: 200,
+        DRAW_DISTANCE: 160,
+        RUMBLE_LENGTH: 3
+    };
 
-  CAMERA_DEPTH: 0.84,
-  CAMERA_HEIGHT: 1000,
-
-  ROAD_WIDTH: 2000,
-
-  // 🔴 ESTES CAMPOS SÃO O QUE FAZ A PISTA EXISTIR
-  SEGMENT_LENGTH: 200,
-  DRAW_DISTANCE: 160,
-  RUMBLE_LENGTH: 3
-};
-
-// === AJUSTES HUMANOS ===
-const GAME_TUNING = {
-    gripLoss: 0.82,
-    offroadPenalty: 0.85,
-    zebraInstability: 0.18,
-    collisionForce: 1.25,
-    centrifugalBoost: 0.6
-};
+    // === BLOCO DE TUNING (ORÁCULO DEFINITIVO) ===
+    const GAME_TUNING = {
+        gripScale: 0.14,           // Controle do volante (menor = mais peso/atraso)
+        centrifugalMult: 1.4,      // Força centrífuga (faz sair da linha)
+        offroadDrag: 0.72,         // Sensação de lama/peso fora da pista
+        zebraJitter: 0.28,         // Instabilidade na zebra (não corrige, atrapalha)
+        collisionPush: 1.6,        // Força do coice em batidas
+        spinPower: 0.8,            // Intensidade do rodopio no chão
+        spinDecay: 0.93            // Quão rápido o kart estabiliza após rodar
+    };
 
     let minimapPoints = [];
     let particles = []; 
@@ -80,26 +77,19 @@ const GAME_TUNING = {
     const Logic = {
         state: 'MODE_SELECT',
         roomId: 'room_01',
-        
         selectedChar: 0,
         selectedTrack: 0,
         isReady: false,
         isOnline: false,
-        
         dbRef: null,
         lastSync: 0,
         autoStartTimer: null,
-
         speed: 0, pos: 0, playerX: 0, steer: 0, targetSteer: 0,
         nitro: 100, turboLock: false,
-        driftState: 0, driftDir: 0, driftCharge: 0, mtStage: 0, boostTimer: 0,    
-        
+        spin: 0,                   // Rotação horizontal (horizontal spin)
         lap: 1, totalLaps: 3, time: 0, rank: 1, score: 0, finishTimer: 0,
-        
         visualTilt: 0, bounce: 0, skyColor: 0, 
         inputState: 0, gestureTimer: 0,
-        
-        // FIX: Inicializa com r=60 para evitar o erro de raio negativo ao iniciar
         virtualWheel: { x:0, y:0, r:60, opacity:0, isHigh: false },
         rivals: [], 
 
@@ -138,7 +128,6 @@ const GAME_TUNING = {
             const toggleTurbo = (e) => {
                 if(e) { if(e.cancelable) e.preventDefault(); e.stopPropagation(); }
                 if(this.state !== 'RACE') return;
-                
                 if(this.nitro > 5) {
                     this.turboLock = !this.turboLock;
                     nitroBtn.style.transform = this.turboLock ? 'scale(0.95)' : 'scale(1)';
@@ -180,8 +169,7 @@ const GAME_TUNING = {
 
         resetPhysics: function() {
             this.speed = 0; this.pos = 0; this.playerX = 0; this.steer = 0;
-            this.lap = 1; this.score = 0; this.driftState = 0; this.nitro = 100;
-            // FIX: Inicializa r=60
+            this.lap = 1; this.score = 0; this.spin = 0; this.nitro = 100;
             this.virtualWheel = { x:0, y:0, r:60, opacity:0, isHigh: false };
             particles = [];
         },
@@ -333,7 +321,7 @@ const GAME_TUNING = {
                 if (this.isOnline) this.syncMultiplayer();
                 return Math.floor(this.score);
             } catch (err) {
-                console.error("Erro recuperado:", err);
+                console.error("Erro fatal recuperado:", err);
                 return 0;
             }
         },
@@ -369,143 +357,127 @@ const GAME_TUNING = {
                 const rw = pose.keypoints.find(k => k.name === 'right_wrist');
                 const n  = pose.keypoints.find(k => k.name === 'nose');
 
-                // Lógica simples e robusta (sem detecção dinâmica que falha)
                 const mapPoint = (pt) => {
-                    let nx = pt.x;
-                    let ny = pt.y;
-                    if (nx > 1) nx = nx / 640; 
-                    if (ny > 1) ny = ny / 480;
+                    let nx = pt.x; let ny = pt.y;
+                    if (nx > 1) nx = nx / 640; if (ny > 1) ny = ny / 480;
                     return { x: (1 - nx) * w, y: ny * h };
                 };
 
-                // Limiar 0.15 (robusto)
                 if (lw && lw.score > 0.15) { pLeft = mapPoint(lw); detected++; }
                 if (rw && rw.score > 0.15) { pRight = mapPoint(rw); detected++; }
                 if (n && n.score > 0.15) { nose = mapPoint(n); }
 
-                // TURBO GESTUAL
                 if (detected === 2 && nose) {
                     const isHandsHigh = (pLeft.y < nose.y && pRight.y < nose.y);
                     d.virtualWheel.isHigh = isHandsHigh;
-
                     if (isHandsHigh) {
                          d.gestureTimer++;
-                         if (d.gestureTimer > 15 && d.nitro > 5) { d.turboLock = true; window.System.msg("TURBO ATIVADO!"); }
+                         if (d.gestureTimer > 15 && d.nitro > 5) { d.turboLock = true; }
                     } else { 
                         d.gestureTimer = 0; 
                         if (d.nitro <= 0) d.turboLock = false; 
                     }
-                } else {
-                    d.virtualWheel.isHigh = false;
-                }
+                } else { d.virtualWheel.isHigh = false; }
             }
 
-            // VOLANTE E INPUT
+            // INPUT & VOLANTE (TUNING: SEM CORREÇÃO AUTOMÁTICA)
             if (detected === 2) {
-                d.inputState = 2; // DETECTOU MÃOS!
-                const dx = pRight.x - pLeft.x; 
-                const dy = pRight.y - pLeft.y;
+                d.inputState = 2;
+                const dx = pRight.x - pLeft.x; const dy = pRight.y - pLeft.y;
                 const rawAngle = Math.atan2(dy, dx);
-                d.targetSteer = (Math.abs(rawAngle) > 0.05) ? rawAngle * 2.5 : 0;
+                d.targetSteer = (Math.abs(rawAngle) > 0.05) ? rawAngle * 2.8 : 0;
                 
-                d.virtualWheel.x = (pLeft.x + pRight.x) / 2; 
-                d.virtualWheel.y = (pLeft.y + pRight.y) / 2;
-                d.virtualWheel.r = Math.max(40, Math.hypot(dx, dy) / 2); 
-                d.virtualWheel.opacity = 1.0; 
+                d.virtualWheel.x = (pLeft.x + pRight.x) / 2; d.virtualWheel.y = (pLeft.y + pRight.y) / 2;
+                d.virtualWheel.r = Math.max(40, Math.hypot(dx, dy) / 2); d.virtualWheel.opacity = 1.0; 
             } else {
-                d.inputState = 0; // SEM MÃOS
+                d.inputState = 0;
                 d.targetSteer = 0; 
                 d.virtualWheel.isHigh = false;
-                
-                // Volta para o centro se perder as mãos
                 d.virtualWheel.x += ((w / 2) - d.virtualWheel.x) * 0.1;
                 d.virtualWheel.y += ((h * 0.75) - d.virtualWheel.y) * 0.1;
                 d.virtualWheel.r += (60 - d.virtualWheel.r) * 0.1;
-                d.virtualWheel.opacity += (0.3 - d.virtualWheel.opacity) * 0.1;
+                d.virtualWheel.opacity += (0.1 - d.virtualWheel.opacity) * 0.1;
             }
             
             const speedRatio = d.speed / CONF.MAX_SPEED;
+            // Steering suave com atraso de peso
+            d.steer += (d.targetSteer - d.steer) * GAME_TUNING.gripScale;
+            d.steer = Math.max(-1.8, Math.min(1.8, d.steer));
 
-d.steer +=
-    (d.targetSteer - d.steer) *
-    CONF.FRICTION *
-    (1 - (1 - GAME_TUNING.gripLoss) * speedRatio);
-            d.steer = Math.max(-1.5, Math.min(1.5, d.steer));
-
-            // --- LÓGICA DE ACELERAÇÃO ---
+            // ACELERAÇÃO
             let currentMax = CONF.MAX_SPEED * charStats.speedInfo;
-            if (d.turboLock && d.nitro > 0) { currentMax = CONF.TURBO_MAX_SPEED; d.nitro -= 0.6; if(d.nitro <= 0) { d.nitro = 0; d.turboLock = false; } }
-            else { d.nitro = Math.min(100, d.nitro + 0.1); }
-            if(d.boostTimer > 0) { currentMax += 100; d.boostTimer--; }
-
-            const hasGas = (d.inputState > 0 || d.turboLock); 
+            if (d.turboLock && d.nitro > 0) { 
+                currentMax = CONF.TURBO_MAX_SPEED; 
+                d.nitro -= 0.7; 
+                if(d.nitro <= 0) { d.nitro = 0; d.turboLock = false; } 
+            } else { d.nitro = Math.min(100, d.nitro + 0.12); }
             
+            const hasGas = (d.inputState > 0 || d.turboLock); 
             if (hasGas && d.state === 'RACE') {
-                d.speed += (currentMax - d.speed) * 0.075;
+                d.speed += (currentMax - d.speed) * 0.06;
             } else {
-                d.speed *= CONF.FRICTION; // FREIA SE SOLTAR
+                d.speed *= CONF.FRICTION;
             }
 
             const absX = Math.abs(d.playerX);
 
-// === ZEBRA (instável, nunca ajuda) ===
-if (absX > 2.2 && absX <= 2.8) {
-    d.speed *= GAME_TUNING.offroadPenalty;
-    d.playerX += Math.sin(d.time * 0.4) * GAME_TUNING.zebraInstability;
-}
+            // ZEBRA (Não ajuda, destabiliza com Jitter)
+            if (absX > 2.2 && absX <= 2.8) {
+                d.speed *= 0.97;
+                d.playerX += Math.sin(d.time * 0.6) * GAME_TUNING.zebraJitter;
+            }
 
-// === OFF-ROAD PESADO ===
-if (absX > 2.8) {
-    d.speed *= GAME_TUNING.offroadPenalty * 0.8;
-    d.playerX *= 0.9;
-}
+            // OFF-ROAD (Sensação de peso e lama)
+            if (absX > 2.8) {
+                d.speed *= GAME_TUNING.offroadDrag;
+                // O kart não é "puxado", ele fica preso no arrasto
+                d.playerX += (d.playerX > 0 ? 0.015 : -0.015); 
+            }
 
-            // Movimento Lateral
+            // FÍSICA DE CURVA (FORÇA CENTRÍFUGA REAL)
             const segIdx = Math.floor(d.pos / CONF.SEGMENT_LENGTH);
             const seg = getSegment(segIdx);
-            const centrifugal =
-    -seg.curve *
-    (speedRatio * speedRatio) *
-    CONF.CENTRIFUGAL_FORCE *
-    (1 + speedRatio * GAME_TUNING.centrifugalBoost);
+            
+            // Força centrífuga aumenta com a velocidade: se não virar, sai reto.
+            const centrifugal = -seg.curve * (speedRatio * speedRatio) * CONF.CENTRIFUGAL_FORCE * GAME_TUNING.centrifugalMult;
+            
+            const steerPower = 0.14 * charStats.turnInfo;
+            d.playerX += (d.steer * steerPower * speedRatio) + centrifugal;
 
-const steerPower = 0.15 * charStats.turnInfo;
-
-d.playerX += (d.steer * steerPower * speedRatio) + centrifugal;
-
-            if(d.playerX < -4.5) { d.playerX = -4.5; d.speed *= 0.95; }
-            if(d.playerX > 4.5)  { d.playerX = 4.5;  d.speed *= 0.95; }
+            // Limites de pista
+            if(d.playerX < -5.0) { d.playerX = -5.0; d.speed *= 0.9; }
+            if(d.playerX > 5.0)  { d.playerX = 5.0;  d.speed *= 0.9; }
 
             // COLISÕES COM OBSTÁCULOS
             seg.obs.forEach(o => {
-                if(o.x < 10 && Math.abs(d.playerX - o.x) < 0.35 && Math.abs(d.playerX) < 4.0) {
-                    d.speed *= 0.55; o.x = 999; d.bounce = -15; window.Sfx.crash(); window.Gfx.shakeScreen(15);
+                if(o.x < 10 && Math.abs(d.playerX - o.x) < 0.4 && Math.abs(d.playerX) < 4.0) {
+                    d.speed *= 0.5; o.x = 999; d.bounce = -18; 
+                    d.spin = (Math.random() > 0.5 ? 1 : -1) * 15; // Roda ao bater em cone
+                    window.Sfx.crash(); window.Gfx.shakeScreen(15);
                 }
             });
 
-            // COLISÃO ENTRE JOGADORES (PVP)
+            // COLISÃO ENTRE JOGADORES (TUNING: IMPACTO ARCADE)
             d.rivals.forEach(r => {
                 let distZ = r.pos - d.pos;
                 if (distZ > trackLength / 2) distZ -= trackLength;
                 if (distZ < -trackLength / 2) distZ += trackLength;
                 let distX = r.x - d.playerX;
 
-                if (Math.abs(distZ) < 300 && Math.abs(distX) < 0.6) {
-    d.speed *= 0.88;
-    d.bounce = -12;
-
-    const push =
-        0.12 *
-        GAME_TUNING.collisionForce *
-        (0.6 + speedRatio * 0.4);
-
-    d.playerX -= (distX > 0 ? push : -push);
-    d.visualTilt += (distX > 0 ? -1 : 1) * push * 6;
-
-    window.Sfx.crash();
-    window.Gfx.shakeScreen(8);
-}
+                if (Math.abs(distZ) < 350 && Math.abs(distX) < 0.7) {
+                    d.speed *= 0.85; 
+                    d.bounce = -12;
+                    // Batida Lateral/Traseira causa empurrão e spin real no chão
+                    const push = (distX > 0 ? -1 : 1) * GAME_TUNING.collisionPush;
+                    d.playerX += push * 0.1;
+                    d.spin = push * 8; // Inicia rotação horizontal
+                    window.Sfx.crash(); window.Gfx.shakeScreen(12);
+                }
             });
+
+            // Decaimento do Spin (estabilização)
+            d.spin *= GAME_TUNING.spinDecay;
+            if(Math.abs(d.spin) < 0.1) d.spin = 0;
 
             d.pos += d.speed;
             if (d.pos >= trackLength) {
@@ -519,20 +491,18 @@ d.playerX += (d.steer * steerPower * speedRatio) + centrifugal;
             let pAhead = 0;
             d.rivals.forEach(r => {
                 if (r.isRemote) {
-                    r.pos += r.speed; 
-                    if(r.pos >= trackLength) { r.pos -= trackLength; r.lap++; }
+                    r.pos += r.speed; if(r.pos >= trackLength) { r.pos -= trackLength; r.lap++; }
                 } else {
                     let dist = r.pos - d.pos;
                     if(dist > trackLength/2) dist -= trackLength; if(dist < -trackLength/2) dist += trackLength;
-                    let targetS = CONF.MAX_SPEED * 0.45;
-                    r.speed += (targetS - r.speed) * (r.aggro || 0.03);
+                    let targetS = CONF.MAX_SPEED * 0.48;
+                    r.speed += (targetS - r.speed) * (r.aggro || 0.035);
                     r.pos += r.speed;
                     if(r.pos >= trackLength) { r.pos -= trackLength; r.lap++; }
                     if(r.pos < 0) r.pos += trackLength;
                     const rSeg = getSegment(Math.floor(r.pos/CONF.SEGMENT_LENGTH));
-                    r.x += (-(rSeg.curve * 0.6) - r.x) * 0.05;
+                    r.x += (-(rSeg.curve * 0.7) - r.x) * 0.05;
                 }
-                
                 let playerTotalDist = d.pos + (d.lap * trackLength);
                 let rivalTotalDist = r.pos + ((r.lap||1) * trackLength);
                 if (rivalTotalDist > playerTotalDist) pAhead++;
@@ -540,14 +510,13 @@ d.playerX += (d.steer * steerPower * speedRatio) + centrifugal;
             d.rank = 1 + pAhead;
 
             d.time++; d.score += d.speed * 0.01; d.bounce *= 0.8;
-            if(Math.abs(d.playerX) > 2.2) { d.bounce = Math.sin(d.time)*5; window.Gfx.shakeScreen(2); }
-            d.visualTilt +=
-    ((d.steer * 16) - d.visualTilt) *
-    (0.05 + (d.speed / CONF.MAX_SPEED) * 0.03);
-
+            if(Math.abs(d.playerX) > 2.2) { d.bounce = Math.sin(d.time)*6; window.Gfx.shakeScreen(2); }
             
+            // Transferência de peso visual
+            d.visualTilt += ((d.steer * 18) - d.visualTilt) * (0.06 + (d.speed / CONF.MAX_SPEED) * 0.04);
+
             if (d.state === 'FINISHED') {
-                d.speed *= 0.95;
+                d.speed *= 0.96;
                 if(d.speed < 2 && d.finishTimer === 0) { d.finishTimer = 1; setTimeout(()=> window.System.gameOver(Math.floor(d.score)), 2000); }
             }
         },
@@ -580,7 +549,6 @@ d.playerX += (d.steer * steerPower * speedRatio) + centrifugal;
             let dx = 0; let camX = d.playerX * (w * 0.4);
             let segmentCoords = [];
 
-            // 1. DESENHA A ESTRADA (FUNDO P/ FRENTE)
             for(let n = 0; n < CONF.DRAW_DISTANCE; n++) {
                 const segIdx = currentSegIndex + n;
                 const seg = getSegment(segIdx);
@@ -616,7 +584,6 @@ d.playerX += (d.steer * steerPower * speedRatio) + centrifugal;
                 ctx.fill();
             }
 
-            // 2. DESENHA OBJETOS E RIVAIS (TRAS P/ FRENTE)
             for(let n = CONF.DRAW_DISTANCE - 1; n >= 0; n--) {
                 const coord = segmentCoords[n]; 
                 if (!coord) continue;
@@ -659,7 +626,8 @@ d.playerX += (d.steer * steerPower * speedRatio) + centrifugal;
             ctx.save(); 
             ctx.translate(cx, y); 
             ctx.scale(carScale, carScale);
-            ctx.rotate(tilt * 0.02 + (d.driftState === 1 ? d.driftDir * 0.3 : 0));
+            // Inserção da Rotação Horizontal (Spin) - NO CHÃO
+            ctx.rotate(tilt * 0.02 + (d.spin * 0.1));
             
             ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.beginPath(); ctx.ellipse(0, 35, 60, 15, 0, 0, Math.PI*2); ctx.fill();
             
@@ -669,7 +637,7 @@ d.playerX += (d.steer * steerPower * speedRatio) + centrifugal;
             ctx.beginPath(); ctx.moveTo(-25, -30); ctx.lineTo(25, -30); ctx.lineTo(40, 10); ctx.lineTo(10, 35); ctx.lineTo(-10, 35); ctx.lineTo(-40, 10); ctx.fill();
             
             if (d.turboLock || d.boostTimer > 0) { 
-                ctx.fillStyle = (d.mtStage === 2 || d.turboLock) ? '#00ffff' : '#ffaa00'; 
+                ctx.fillStyle = '#00ffff'; 
                 ctx.beginPath(); ctx.arc(-20, -30, 10 + Math.random() * 15, 0, Math.PI*2); 
                 ctx.arc(20, -30, 10 + Math.random() * 15, 0, Math.PI*2); ctx.fill(); 
             }
@@ -687,13 +655,9 @@ d.playerX += (d.steer * steerPower * speedRatio) + centrifugal;
             ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, -20, 18, 0, Math.PI*2); ctx.fill(); 
             ctx.fillStyle = '#333'; ctx.fillRect(-15, -25, 30, 8); 
             
-            if (isRival) {
-                ctx.fillStyle = '#0f0'; ctx.font='bold 12px Arial'; ctx.textAlign='center'; ctx.fillText('P2', 0, -32);
-            } else {
-                ctx.fillStyle = 'red'; ctx.font='bold 12px Arial'; ctx.textAlign='center'; ctx.fillText('EU', 0, -32);
-            }
+            ctx.fillStyle = isRival ? '#0f0' : 'red'; ctx.font='bold 12px Arial'; ctx.textAlign='center'; 
+            ctx.fillText(isRival ? 'P2' : 'EU', 0, -32);
             ctx.restore(); 
-            
             ctx.restore(); 
         },
 
@@ -701,11 +665,9 @@ d.playerX += (d.steer * steerPower * speedRatio) + centrifugal;
             ctx.fillStyle = "#2c3e50"; ctx.fillRect(0, 0, w, h);
             ctx.fillStyle = "white"; ctx.textAlign = "center"; ctx.font = "bold 40px 'Russo One'";
             ctx.fillText("ESCOLHA O MODO DE JOGO", w/2, h * 0.2);
-
             ctx.fillStyle = "#e67e22"; ctx.fillRect(w/2 - 200, h * 0.35, 400, 80);
             ctx.fillStyle = "white"; ctx.font = "bold 30px sans-serif";
             ctx.fillText("JOGAR SOZINHO (OFFLINE)", w/2, h * 0.35 + 50);
-
             ctx.fillStyle = "#27ae60"; ctx.fillRect(w/2 - 200, h * 0.55, 400, 80);
             ctx.fillStyle = "white";
             ctx.fillText("MULTIPLAYER (ONLINE)", w/2, h * 0.55 + 50);
@@ -715,35 +677,24 @@ d.playerX += (d.steer * steerPower * speedRatio) + centrifugal;
             ctx.fillStyle = "#2c3e50"; ctx.fillRect(0, 0, w, h);
             ctx.fillStyle = "white"; ctx.textAlign = "center"; ctx.font = "bold 40px 'Russo One'";
             ctx.fillText("LOBBY DA CORRIDA", w/2, 60);
-
             const c = CHARACTERS[this.selectedChar];
             ctx.fillStyle = c.color; ctx.beginPath(); ctx.arc(w/2, h*0.3, 60, 0, Math.PI*2); ctx.fill();
             ctx.fillStyle = "white"; ctx.font = "bold 30px sans-serif";
             ctx.fillText(c.name, w/2, h*0.3 + 100);
-            
             const t = TRACKS[this.selectedTrack];
             ctx.fillStyle = "#34495e"; ctx.fillRect(w/2 - 150, h*0.55, 300, 60);
             ctx.fillStyle = "#ecf0f1"; ctx.fillText("PISTA: " + t.name, w/2, h*0.55 + 40);
-
             let btnText = "PRONTO (TOQUE P/ INICIAR)";
             let btnColor = "#e67e22";
-
             if (this.state === 'WAITING') {
                 btnText = "AGUARDANDO...";
                 if (this.autoStartTimer) {
                     const timeLeft = Math.ceil((this.autoStartTimer - Date.now()) / 1000);
                     btnText = `INICIANDO EM ${timeLeft}s...`;
                 }
-            } else if (this.state === 'LOBBY') {
-                btnColor = "#27ae60";
-            }
-
+            } else if (this.state === 'LOBBY') { btnColor = "#27ae60"; }
             ctx.fillStyle = btnColor; ctx.fillRect(w/2 - 200, h*0.8, 400, 70);
             ctx.fillStyle = "white"; ctx.font = "bold 25px 'Russo One'"; ctx.fillText(btnText, w/2, h*0.8 + 45);
-
-            ctx.textAlign = "left"; ctx.font = "14px monospace"; ctx.fillStyle = "#bdc3c7";
-            const onlineStatus = this.isOnline ? `Online (${this.rivals.length + 1})` : "Offline (Local)";
-            ctx.fillText(`Jogadores: ${onlineStatus}`, 20, h - 20);
         },
 
         renderUI: function(ctx, w, h) {
@@ -754,74 +705,42 @@ d.playerX += (d.steer * steerPower * speedRatio) + centrifugal;
                     ctx.fillStyle = '#00ffff'; ctx.font = "bold 48px 'Russo One'"; ctx.textAlign = 'center'; 
                     ctx.fillText(lapPopupText, w / 2, h * 0.45); ctx.restore(); lapPopupTimer--; 
                 }
-                
                 const hudX = w - 80; const hudY = h - 60; 
                 ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.beginPath(); ctx.arc(hudX, hudY, 55, 0, Math.PI * 2); ctx.fill();
                 const rpm = Math.min(1, d.speed / CONF.TURBO_MAX_SPEED); 
                 ctx.beginPath(); ctx.arc(hudX, hudY, 50, Math.PI, Math.PI + Math.PI * rpm); 
-                ctx.lineWidth = 6; ctx.strokeStyle = (d.turboLock || d.boostTimer > 0) ? '#00ffff' : '#ff3300'; ctx.stroke();
-                
+                ctx.lineWidth = 6; ctx.strokeStyle = (d.turboLock) ? '#00ffff' : '#ff3300'; ctx.stroke();
                 ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; 
                 ctx.font = "bold 36px 'Russo One'"; ctx.fillText(Math.floor(d.speed), hudX, hudY + 10);
                 ctx.font = "bold 18px 'Russo One'"; ctx.fillText(`${d.rank} / ${d.rivals.length + 1}`, hudX, hudY + 42);
-                
                 const nW = 220; ctx.fillStyle = '#111'; ctx.fillRect(w / 2 - nW / 2, 20, nW, 20); 
                 ctx.fillStyle = d.turboLock ? '#00ffff' : (d.nitro > 20 ? '#00aa00' : '#ff3300'); 
                 ctx.fillRect(w / 2 - nW / 2 + 2, 22, (nW - 4) * (d.nitro / 100), 16);
-
                 if (minimapPoints.length > 0) {
                     const mapSize = 130; const mapX = 25; const mapY = 95; ctx.save();
                     ctx.fillStyle = 'rgba(10, 25, 40, 0.8)'; ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 2; 
                     ctx.fillRect(mapX - 5, mapY - 5, mapSize + 10, mapSize + 10); 
                     ctx.strokeRect(mapX - 5, mapY - 5, mapSize + 10, mapSize + 10);
-                    
                     ctx.beginPath(); ctx.rect(mapX, mapY, mapSize, mapSize); ctx.clip();
                     const b = minimapPoints.reduce((acc, p) => ({ minX: Math.min(acc.minX, p.x), maxX: Math.max(acc.maxX, p.x), minY: Math.min(acc.minY, p.y), maxY: Math.max(acc.maxY, p.y) }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
                     const s = Math.min(mapSize / (b.maxX - b.minX), mapSize / (b.maxY - b.minY)) * 0.85;
-                    
                     ctx.translate(mapX + mapSize / 2, mapY + mapSize / 2); ctx.scale(s, s); 
                     ctx.rotate(-getSegment(Math.floor(d.pos / CONF.SEGMENT_LENGTH)).curve * 0.7);
                     ctx.translate(-(b.minX + b.maxX) / 2, -(b.minY + b.maxY) / 2); 
-                    
                     ctx.strokeStyle = '#39ff14'; ctx.lineWidth = 4; ctx.beginPath();
                     minimapPoints.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); }); ctx.stroke();
-                    
                     const pi = Math.floor((d.pos / trackLength) * minimapPoints.length) % minimapPoints.length;
                     ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(minimapPoints[pi].x, minimapPoints[pi].y, 6, 0, Math.PI * 2); ctx.fill();
-                    
-                    d.rivals.forEach(r => { 
-                        let rIdx = Math.floor((r.pos / trackLength) * minimapPoints.length) % minimapPoints.length;
-                        if(minimapPoints[rIdx]) {
-                            ctx.fillStyle = r.color; ctx.beginPath(); 
-                            ctx.arc(minimapPoints[rIdx].x, minimapPoints[rIdx].y, 4, 0, Math.PI * 2); ctx.fill(); 
-                        }
-                    });
                     ctx.restore();
                 }
-
                 if (d.virtualWheel.opacity > 0.01) {
-                    const vw = d.virtualWheel; 
-                    ctx.save(); 
-                    ctx.globalAlpha = vw.opacity; 
-                    ctx.translate(vw.x, vw.y);
-                    
-                    if (vw.isHigh) {
-                        ctx.shadowBlur = 25;
-                        ctx.shadowColor = '#00ffff';
-                    } else {
-                        ctx.shadowBlur = 0;
-                    }
-
-                    // FIX CRÍTICO AQUI: Garantir que o raio nunca seja negativo
-                    const safeR = Math.max(0, vw.r);
-                    const safeInnerR = Math.max(0, vw.r - 8);
-
+                    const vw = d.virtualWheel; ctx.save(); ctx.globalAlpha = vw.opacity; ctx.translate(vw.x, vw.y);
+                    if (vw.isHigh) { ctx.shadowBlur = 25; ctx.shadowColor = '#00ffff'; }
+                    const safeR = Math.max(0, vw.r); const safeInnerR = Math.max(0, vw.r - 8);
                     ctx.lineWidth = 8; ctx.strokeStyle = '#222'; ctx.beginPath(); ctx.arc(0, 0, safeR, 0, Math.PI * 2); ctx.stroke();
                     ctx.lineWidth = 4; ctx.strokeStyle = '#00ffff'; ctx.beginPath(); ctx.arc(0, 0, safeInnerR, 0, Math.PI * 2); ctx.stroke();
-                    ctx.rotate(d.steer * 1.4); 
-                    ctx.fillStyle = '#ff3300'; ctx.beginPath(); ctx.fillRect(-4, -safeR + 10, 8, 22);
-                    ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(0, 0, 10, 0, Math.PI * 2); ctx.fill(); 
-                    ctx.restore();
+                    ctx.rotate(d.steer * 1.4); ctx.fillStyle = '#ff3300'; ctx.beginPath(); ctx.fillRect(-4, -safeR + 10, 8, 22);
+                    ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(0, 0, 10, 0, Math.PI * 2); ctx.fill(); ctx.restore();
                 }
             } else {
                 ctx.fillStyle = "rgba(0,0,0,0.85)"; ctx.fillRect(0, 0, w, h);
@@ -832,9 +751,6 @@ d.playerX += (d.steer * steerPower * speedRatio) + centrifugal;
     };
 
     if(window.System) {
-        window.System.registerGame('drive', 'Otto Kart GP', '🏎️', Logic, {
-            camOpacity: 0.1, 
-            showWheel: true 
-        });
+        window.System.registerGame('drive', 'Otto Kart GP', '🏎️', Logic, { camOpacity: 0.1, showWheel: true });
     }
-})()
+})();
