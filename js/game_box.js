@@ -106,6 +106,7 @@
         // Sistema de Partículas e Textos Flutuantes
         effects: [],
 
+
         // Multiplayer
         roomId: 'pro_arena_01',
         isOnline: false,
