@@ -1,5 +1,5 @@
 // =============================================================================
-// KART LEGENDS: ULTIMATE ARCADE ENGINE (V7.0 - FINAL GOLD)
+// KART LEGENDS: ULTIMATE ARCADE ENGINE (V7.1 - FINAL GOLD + GESTURE FIX)
 // ARQUITETO: SENIOR GAME DEV
 // FEATURES: FÍSICA DRIFT, CARROS 3D SPRITES, GESTO TURBO, MINIMAPA REAL
 // =============================================================================
@@ -172,7 +172,7 @@
             return Math.floor(this.score);
         },
 
-        // --- CONTROLES ---
+        // --- CONTROLES (AGORA MAIS SENSÍVEL) ---
         processInput: function(w, h, pose) {
             if(this.spinTimer > 0) return;
 
@@ -183,7 +183,8 @@
                 const rw = pose.keypoints.find(k=>k.name==='right_wrist');
                 const nose = pose.keypoints.find(k=>k.name==='nose');
 
-                if(lw && rw && lw.score > 0.2 && rw.score > 0.2) {
+                // Aumentei sensibilidade para 0.15
+                if(lw && rw && lw.score > 0.15 && rw.score > 0.15) {
                     handsFound = true;
                     // Mapeamento
                     const lx = (1 - lw.x/640)*w; const ly = (lw.y/480)*h;
@@ -197,8 +198,9 @@
                     
                     // Gesto de Turbo (Mãos altas)
                     let isHigh = false;
-                    if (nose && nose.score > 0.2) {
+                    if (nose && nose.score > 0.15) {
                         const ny = (nose.y/480)*h;
+                        // Se mãos acima do nariz
                         if (ly < ny && ry < ny) isHigh = true;
                     }
                     this.virtualWheel = { x: (lx+rx)/2, y: (ly+ry)/2, r: Math.hypot(dx,dy)/2, opacity: 1, isHigh: isHigh };
