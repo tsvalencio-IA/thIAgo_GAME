@@ -59,15 +59,20 @@
         return segments[((Math.floor(index) % segments.length) + segments.length) % segments.length] || DUMMY_SEG;
     }
 
+    // --- CORREÇÃO 1: GERAÇÃO FIEL DO MINIMAPA ---
     function buildMiniMap(segments) {
         minimapPath = [];
         let x = 0, z = 0, angle = 0;
+        // O loop percorre a pista inteira para gerar a geometria exata
         segments.forEach(seg => {
-            angle += seg.curve * 0.003; 
-            x += Math.sin(angle) * 10;
-            z -= Math.cos(angle) * 10;
+            // Ajuste do multiplicador para refletir curvas reais (coordenada polar)
+            angle += seg.curve * 0.035; 
+            x += Math.sin(angle) * 8; // Projetando coordenadas
+            z -= Math.cos(angle) * 8;
             minimapPath.push({ x, z });
         });
+
+        // Calculando bounds para centralizar
         let minX=Infinity, maxX=-Infinity, minZ=Infinity, maxZ=-Infinity;
         minimapPath.forEach(p => {
             if(p.x < minX) minX = p.x; if(p.x > maxX) maxX = p.x;
@@ -203,6 +208,7 @@
             this.resetPhysics();
             this.isOnline = (mode === 'ONLINE' && !!window.DB);
             if (!this.isOnline) {
+                // Bots iniciais com posição e velocidade zerada para start
                 this.rivals = [
                     { id:'cpu1', charId:3, pos: 1200, x:-0.6, speed:0, color: CHARACTERS[3].color, name:'Bowser', lap: 1 },
                     { id:'cpu2', charId:4, pos: 600, x:0.6, speed:0, color: CHARACTERS[4].color, name:'Toad', lap: 1 }
@@ -382,7 +388,46 @@
                 this.spawnParticle(w/2 + 45, h*0.92, 'smoke');
             }
 
-            // 4. SPIN E COLISÃO
+            // --- CORREÇÃO 2: IA ADVERSÁRIA (MODO OFFLINE) ---
+            if (d.state === 'RACE' && !d.isOnline) {
+                d.rivals.forEach(r => {
+                    const rChar = CHARACTERS[r.charId];
+                    const rSeg = getSegment(r.pos / CONF.SEGMENT_LENGTH);
+
+                    // 1. Aceleração inteligente
+                    const targetSpeed = (CONF.MAX_SPEED * rChar.speedInfo) - (Math.abs(rSeg.curve) * 20); 
+                    if (r.speed < targetSpeed) r.speed += rChar.accel * 0.8;
+                    r.speed *= 0.99; // Atrito básico
+
+                    // 2. Direção (IA segue a curva e mantém a pista)
+                    // Calcula a posição ideal (tenta cortar a curva levemente ou ficar no centro)
+                    const idealX = -(rSeg.curve * 0.35); 
+                    // Move suavemente para a posição ideal
+                    r.x += (idealX - r.x) * 0.06;
+                    
+                    // Jitter natural e disputa de espaço
+                    r.x += (Math.random() - 0.5) * 0.04; 
+                    
+                    // Colisão simples IA x IA
+                    d.rivals.forEach(other => {
+                        if (r !== other && Math.abs(r.pos - other.pos) < 100 && Math.abs(r.x - other.x) < 0.8) {
+                            if (r.x < other.x) r.x -= 0.05; else r.x += 0.05;
+                        }
+                    });
+
+                    // Limites da pista para IA
+                    r.x = Math.max(-1.8, Math.min(1.8, r.x));
+
+                    // Atualiza Posição
+                    r.pos += r.speed;
+                    if (r.pos >= trackLength) {
+                        r.pos -= trackLength;
+                        r.lap++;
+                    }
+                });
+            }
+
+            // 4. SPIN E COLISÃO (PLAYER)
             if (d.spinTimer > 0) { d.spinTimer--; d.spinAngle += 0.4; d.speed *= 0.95; }
             else if (absX > 1.5 && ratio > 0.82 && Math.abs(d.lateralInertia) > 0.15) {
                 d.spinTimer = 45; window.Sfx.play(200, 'sawtooth', 0.2, 0.1); d.pushMsg("DERRAPOU!");
@@ -390,6 +435,10 @@
 
             d.rivals.forEach(r => {
                 let dZ = Math.abs(r.pos - d.pos); let dX = Math.abs(r.x - d.playerX);
+                // Tratamento de loop na pista para colisão
+                if (Math.abs((r.pos - trackLength) - d.pos) < 160) dZ = Math.abs((r.pos - trackLength) - d.pos);
+                if (Math.abs(r.pos - (d.pos - trackLength)) < 160) dZ = Math.abs(r.pos - (d.pos - trackLength));
+
                 if (dZ < 160 && dX < 0.7) {
                     const rChar = CHARACTERS[r.charId] || char;
                     d.lateralInertia += (d.playerX > r.x ? 0.18 : -0.18) * (rChar.weight / char.weight);
@@ -401,7 +450,10 @@
             let ahead = 0;
             d.rivals.forEach(r => {
                 if(!r.lap) r.lap = 1;
-                if((r.pos + r.lap*trackLength) > (d.pos + d.lap*trackLength)) ahead++;
+                // Calculo de distância total percorrida para ranking preciso
+                const rDist = r.lap * trackLength + r.pos;
+                const pDist = d.lap * trackLength + d.pos;
+                if(rDist > pDist) ahead++;
             });
             d.rank = ahead + 1;
 
@@ -567,8 +619,13 @@
                 minimapPath.forEach((p, i) => { if(i===0) ctx.moveTo(p.x, p.z); else ctx.lineTo(p.x, p.z); });
                 ctx.closePath(); ctx.stroke();
                 const drawDot = (pos, c, r) => {
-                    const idx = Math.floor((pos/trackLength)*minimapPath.length)%minimapPath.length;
-                    const pt = minimapPath[idx]; if(pt){ctx.fillStyle=c; ctx.beginPath(); ctx.arc(pt.x, pt.z, r, 0, Math.PI*2); ctx.fill(); ctx.strokeStyle="#fff"; ctx.lineWidth=2; ctx.stroke();}
+                    // Mapeamento correto: (Posição / TamanhoTotal) * TotalPontosDoMapa
+                    const idx = Math.floor((pos/trackLength) * minimapPath.length) % minimapPath.length;
+                    const pt = minimapPath[idx]; 
+                    if(pt){
+                        ctx.fillStyle=c; ctx.beginPath(); ctx.arc(pt.x, pt.z, r, 0, Math.PI*2); 
+                        ctx.fill(); ctx.strokeStyle="#fff"; ctx.lineWidth=2; ctx.stroke();
+                    }
                 };
                 d.rivals.forEach(r => drawDot(r.pos, r.color, 10)); drawDot(d.pos, '#f00', 14);
                 ctx.restore();
