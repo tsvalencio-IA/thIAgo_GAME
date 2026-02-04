@@ -1,12 +1,12 @@
 // =============================================================================
-// KART LEGENDS: MARIO GP EDITION (FULL FIDELITY & PHYSICS SÊNIOR *177)
-// ENGENHARIA: RESTAURAÇÃO TOTAL DE RENDERIZAÇÃO, EFEITOS E INTERFACE
+// KART LEGENDS: MARIO GP EDITION (GOLD MASTER - PHYSICS & GFX FINAL)
+// ENGENHARIA SÊNIOR *177: CORREÇÃO TOTAL DE INPUT, MAPA, EFEITOS E FÍSICA
 // =============================================================================
 
 (function() {
 
     // -----------------------------------------------------------------
-    // 1. DADOS E CONFIGURAÇÕES (SINCRONIZADO 100% COM V18)
+    // 1. DADOS E CONFIGURAÇÕES
     // -----------------------------------------------------------------
     
     const CHARACTERS = [
@@ -26,11 +26,11 @@
     const CONF = {
         MAX_SPEED: 220,
         TURBO_MAX_SPEED: 330,
-        FRICTION: 0.99,
-        OFFROAD_DECEL: 0.93,
+        FRICTION: 0.98,
+        OFFROAD_DECEL: 0.92,
         ROAD_WIDTH: 2000,
         SEGMENT_LENGTH: 200,
-        DRAW_DISTANCE: 200, 
+        DRAW_DISTANCE: 250, 
         RUMBLE_LENGTH: 3
     };
 
@@ -81,7 +81,7 @@
     // -----------------------------------------------------------------
     const Logic = {
         state: 'MODE_SELECT',
-        roomId: 'mario_arena_177_v1',
+        roomId: 'mario_arena_final_v1',
         selectedChar: 0,
         selectedTrack: 0,
         isReady: false,
@@ -89,13 +89,14 @@
         dbRef: null,
         lastSync: 0,
 
-        // Estado Físico de Alta Estabilidade
+        // Física
         speed: 0, pos: 0, playerX: 0, steer: 0, targetSteer: 0,
         nitro: 100, turboLock: false, gestureTimer: 0,
         spinAngle: 0, spinTimer: 0, lateralInertia: 0, vibration: 0,
         
         lap: 1, totalLaps: 3, rank: 1, score: 0,
         visualTilt: 0, bounce: 0, skyColor: 0,
+        inputActive: false, // Flag para saber se tem mão detectada
         
         virtualWheel: { x:0, y:0, r:60, opacity:0, isHigh: false },
         rivals: [], 
@@ -105,7 +106,7 @@
             this.state = 'MODE_SELECT';
             this.setupUI();
             this.resetPhysics();
-            window.System.msg("ESCOLHA O MODO");
+            window.System.msg("SELECIONE O MODO");
         },
 
         cleanup: function() {
@@ -119,6 +120,9 @@
             this.lap = 1; this.score = 0; this.nitro = 100;
             this.spinAngle = 0; this.spinTimer = 0;
             this.lateralInertia = 0; this.vibration = 0;
+            this.inputActive = false;
+            // Limpeza crítica para não misturar pistas
+            segments = []; minimapPath = [];
             this.rivals = []; particles = []; hudMessages = [];
         },
 
@@ -144,7 +148,7 @@
                 if(this.state === 'RACE' && this.nitro > 15) {
                     this.turboLock = !this.turboLock;
                     window.Sfx.play(600, 'square', 0.1, 0.1);
-                    this.pushMsg(this.turboLock ? "TURBO ATIVADO" : "NORMAL", "#0ff");
+                    this.pushMsg(this.turboLock ? "TURBO ON" : "TURBO OFF", "#0ff");
                 }
             };
             nitroBtn.addEventListener('mousedown', handleNitro);
@@ -167,7 +171,7 @@
         },
 
         buildTrack: function(trackId) {
-            segments = [];
+            segments = []; // Limpa segmentos antigos
             const trk = TRACKS[trackId];
             this.skyColor = trk.sky;
             const mult = trk.curveMult;
@@ -178,8 +182,19 @@
                     theme: trk.theme, obs: []
                 });
             };
-            addRoad(60, 0); addRoad(40, 2); addRoad(30, 0); addRoad(60, -3); 
-            addRoad(40, 0); addRoad(60, 4); addRoad(40, -2); addRoad(80, 0);
+            
+            // Layouts diferentes baseados no ID da pista para evitar mistura
+            if (trackId === 0) { // Cogumelo
+                addRoad(50, 0); addRoad(40, 2); addRoad(40, 0); addRoad(60, -3); 
+                addRoad(40, 0); addRoad(60, 4); addRoad(50, -2); addRoad(80, 0);
+            } else if (trackId === 1) { // Deserto
+                addRoad(80, 0); addRoad(60, -1); addRoad(40, -4); addRoad(100, 0);
+                addRoad(60, 2); addRoad(40, 0); addRoad(30, 5); addRoad(100, 0);
+            } else { // Neve
+                addRoad(40, 0); addRoad(30, 3); addRoad(30, -3); addRoad(30, 3);
+                addRoad(20, -5); addRoad(100, 0); addRoad(50, 2); addRoad(50, 0);
+            }
+
             trackLength = segments.length * CONF.SEGMENT_LENGTH;
             buildMiniMap(segments);
         },
@@ -189,8 +204,8 @@
             this.isOnline = (mode === 'ONLINE' && !!window.DB);
             if (!this.isOnline) {
                 this.rivals = [
-                    { id:'cpu1', charId:3, pos: 1100, x:-0.6, speed:0, color: CHARACTERS[3].color, name:'Bowser', lap: 1 },
-                    { id:'cpu2', charId:4, pos: 550, x:0.6, speed:0, color: CHARACTERS[4].color, name:'Toad', lap: 1 }
+                    { id:'cpu1', charId:3, pos: 1200, x:-0.6, speed:0, color: CHARACTERS[3].color, name:'Bowser', lap: 1 },
+                    { id:'cpu2', charId:4, pos: 600, x:0.6, speed:0, color: CHARACTERS[4].color, name:'Toad', lap: 1 }
                 ];
             } else {
                 this.connectMultiplayer();
@@ -236,20 +251,20 @@
             window.Sfx.play(600, 'square', 0.5, 0.2);
         },
 
-        // --- SISTEMA DE EFEITOS VISUAIS (RESTAURADO) ---
+        // --- SISTEMA DE PARTÍCULAS (CORRIGIDO) ---
         spawnParticle: function(x, y, type) {
             let color = '#fff';
             let vx = (Math.random() - 0.5) * 6;
             let vy = -Math.random() * 4;
             let life = 20;
 
-            if(type === 'smoke') { color = 'rgba(200,200,200,0.8)'; life = 15; }
-            else if(type === 'dust') { color = 'rgba(121,85,72,0.8)'; life = 20; }
+            if(type === 'smoke') { color = 'rgba(240,240,240,0.6)'; life = 25; vy = -2; } // Derrapagem Branca
+            else if(type === 'dust') { color = 'rgba(139,69,19,0.6)'; life = 20; } // Poeira Marrom
             else if(type === 'turbo') { 
-                color = (Math.random() > 0.5) ? '#0ff' : '#fff';
-                vx = (Math.random() - 0.5) * 4;
-                vy = 2 + Math.random() * 5; // Faíscas para trás
-                life = 25; 
+                color = (Math.random() > 0.5) ? '#00ffff' : '#ffffff';
+                vx = (Math.random() - 0.5) * 3;
+                vy = 4 + Math.random() * 4; // Sai para trás/baixo
+                life = 15; 
             }
 
             particles.push({ x, y, vx, vy, l: life, maxL: life, c: color });
@@ -281,7 +296,7 @@
             const d = Logic;
             const char = CHARACTERS[this.selectedChar];
 
-            // 1. INPUT E GESTO TURBO (RESTAURADO)
+            // 1. INPUT E PARADA AUTOMÁTICA
             let detected = false;
             if(pose && pose.keypoints) {
                 const map = (pt) => ({ x: (1 - pt.x/640)*w, y: (pt.y/480)*h });
@@ -295,7 +310,7 @@
                     d.virtualWheel = { x: (pl.x+pr.x)/2, y: (pl.y+pr.y)/2, r: Math.hypot(pr.x-pl.x, pr.y-pl.y)/2, opacity: 1 };
                     detected = true;
 
-                    // BRAÇOS ERGUIDOS -> TURBO
+                    // Turbo Gestual
                     if (nose && lw.y < nose.y && rw.y < nose.y) {
                         d.gestureTimer++;
                         d.virtualWheel.isHigh = true;
@@ -307,10 +322,18 @@
                     } else { d.gestureTimer = 0; d.virtualWheel.isHigh = false; }
                 }
             }
-            if (!detected) { d.targetSteer = 0; d.virtualWheel.opacity *= 0.9; }
+            
+            d.inputActive = detected; // Atualiza estado global de input
+
+            if (!detected) { 
+                d.targetSteer = 0; 
+                d.virtualWheel.opacity *= 0.9; 
+                // PARADA AUTOMÁTICA: Sem mãos, corta aceleração
+                d.turboLock = false;
+            }
             d.steer += (d.targetSteer - d.steer) * (0.12 / Math.sqrt(char.weight));
 
-            // 2. FÍSICA DE TERRENO E EFEITOS
+            // 2. FÍSICA DE TERRENO
             const absX = Math.abs(d.playerX);
             let currentGrip = PHYSICS.gripAsphalt;
             let currentDrag = CONF.FRICTION;
@@ -318,22 +341,31 @@
 
             if (absX > 1.45) { 
                 currentGrip = PHYSICS.gripOffroad; currentDrag = CONF.OFFROAD_DECEL;
-                d.vibration = 5; if(d.speed > 50) d.speed *= 0.985;
-                if(d.speed > 20) this.spawnParticle(w/2 + (Math.random()-0.5)*50, h*0.9, 'dust');
+                d.vibration = 5; 
+                if(d.speed > 50) d.speed *= 0.98; // Freia forte no offroad
+                if(d.speed > 10) this.spawnParticle(w/2 + (Math.random()-0.5)*60, h*0.9, 'dust');
             } else if (absX > 1.0) { 
                 currentGrip = PHYSICS.gripZebra; d.vibration = 2;
             }
 
-            // 3. MOVIMENTO E INÉRCIA REAL (SEM AUTO-STEER)
+            // 3. VELOCIDADE E ACELERAÇÃO (SÓ ACELERA SE INPUTACTIVE FOR TRUE)
             let max = CONF.MAX_SPEED * char.speedInfo;
             if (d.turboLock && d.nitro > 0) { 
                 max = CONF.TURBO_MAX_SPEED; d.nitro -= 0.6;
-                // Efeito de Turbo na Traseira
-                this.spawnParticle(w/2 - 20, h*0.92, 'turbo');
-                this.spawnParticle(w/2 + 20, h*0.92, 'turbo');
+                // Efeito Turbo na Traseira (Atrás do Kart)
+                this.spawnParticle(w/2 - 25, h*0.95, 'turbo');
+                this.spawnParticle(w/2 + 25, h*0.95, 'turbo');
             } else { d.nitro = Math.min(100, d.nitro + 0.15); if(d.nitro < 5) d.turboLock = false; }
 
-            if(d.state === 'RACE' && d.spinTimer <= 0) d.speed += (max - d.speed) * char.accel;
+            // Acelera apenas se estiver em corrida E detectando mãos (ou turbo travado)
+            const isAccelerating = (d.inputActive || d.turboLock);
+            
+            if(d.state === 'RACE' && d.spinTimer <= 0 && isAccelerating) {
+                d.speed += (max - d.speed) * char.accel;
+            } else {
+                // Sem input, o drag natural vai parar o carro
+                d.speed *= 0.96; // Freio motor leve
+            }
             d.speed *= currentDrag;
 
             const seg = getSegment(d.pos / CONF.SEGMENT_LENGTH);
@@ -344,13 +376,13 @@
             d.lateralInertia = (d.lateralInertia * PHYSICS.lateralInertiaDecay) + (turnForce + centrifugal) * 0.08;
             d.playerX += d.lateralInertia;
 
-            // Fumaça de derrapagem (smoke) baseada no deslize lateral
-            if(Math.abs(d.lateralInertia) > 0.13 && d.speed > 40) {
-                this.spawnParticle(w/2 - 40, h*0.9, 'smoke');
-                this.spawnParticle(w/2 + 40, h*0.9, 'smoke');
+            // Fumaça de Derrapagem (Saindo das rodas traseiras)
+            if(Math.abs(d.lateralInertia) > 0.12 && d.speed > 60 && absX < 1.4) {
+                this.spawnParticle(w/2 - 45, h*0.92, 'smoke');
+                this.spawnParticle(w/2 + 45, h*0.92, 'smoke');
             }
 
-            // 4. COLISÃO E ESTABILIDADE
+            // 4. SPIN E COLISÃO
             if (d.spinTimer > 0) { d.spinTimer--; d.spinAngle += 0.4; d.speed *= 0.95; }
             else if (absX > 1.5 && ratio > 0.82 && Math.abs(d.lateralInertia) > 0.15) {
                 d.spinTimer = 45; window.Sfx.play(200, 'sawtooth', 0.2, 0.1); d.pushMsg("DERRAPOU!");
@@ -365,7 +397,7 @@
                 }
             });
 
-            // 5. RANKING E VOLTAS
+            // 5. RANKING
             let ahead = 0;
             d.rivals.forEach(r => {
                 if(!r.lap) r.lap = 1;
@@ -380,10 +412,10 @@
                 if(d.lap <= d.totalLaps) this.pushMsg(`VOLTA ${d.lap}/${d.totalLaps}`, "#fff", 60); 
             }
             
-            // Blindagem contra capotamento (visualTilt limitado)
-            const targetTilt = (d.steer * 12) + (d.spinAngle * 10);
+            // ANTI-CAPOTAMENTO: Clamp no visualTilt
+            const targetTilt = (d.steer * 15) + (d.spinAngle * 10);
             d.visualTilt += (targetTilt - d.visualTilt) * 0.1;
-            d.visualTilt = Math.max(-20, Math.min(20, d.visualTilt));
+            d.visualTilt = Math.max(-25, Math.min(25, d.visualTilt)); // Limita inclinação a 25 graus
 
             d.bounce = (Math.random() - 0.5) * d.vibration;
             d.score += d.speed * 0.01;
@@ -396,7 +428,7 @@
         },
 
         // =================================================================
-        // RENDERIZAÇÃO (RESTAURAÇÃO TOTAL V18)
+        // RENDERIZAÇÃO
         // =================================================================
 
         renderWorld: function(ctx, w, h) {
@@ -404,14 +436,14 @@
             const currentSegIndex = Math.floor(d.pos / CONF.SEGMENT_LENGTH);
             const isOffRoad = Math.abs(d.playerX) > 1.2;
 
-            // Céu Gradiente Original
+            // Céu
             const skyGrads = [['#3388ff', '#88ccff'], ['#e67e22', '#f1c40f'], ['#0984e3', '#74b9ff']];
             const currentSky = skyGrads[this.skyColor] || skyGrads[0];
             const gradSky = ctx.createLinearGradient(0, 0, 0, horizon);
             gradSky.addColorStop(0, currentSky[0]); gradSky.addColorStop(1, currentSky[1]);
             ctx.fillStyle = gradSky; ctx.fillRect(0, 0, w, horizon);
 
-            // Montanhas/Background Original
+            // Montanhas
             const bgOffset = (getSegment(currentSegIndex).curve * 30) + (d.steer * 20);
             ctx.fillStyle = this.skyColor === 0 ? '#44aa44' : (this.skyColor===1 ? '#d35400' : '#fff'); 
             ctx.beginPath(); ctx.moveTo(0, horizon);
@@ -440,36 +472,35 @@
                 ctx.fillStyle = (seg.color === 'dark') ? (isOffRoad?'#336622':theme[1]) : (isOffRoad?'#336622':theme[0]);
                 ctx.fillRect(0, nsy, w, sy - nsy);
                 
-                // Zebra Trapezoidal
                 ctx.fillStyle = (seg.color === 'dark') ? '#f33' : '#fff'; 
                 ctx.beginPath(); 
                 ctx.moveTo(sx - (w*3*scale)*0.6, sy); ctx.lineTo(sx + (w*3*scale)*0.6, sy); 
                 ctx.lineTo(nsx + (w*3*nextScale)*0.6, nsy); ctx.lineTo(nsx - (w*3*nextScale)*0.6, nsy); 
                 ctx.fill();
                 
-                // Pista
                 ctx.fillStyle = (seg.color === 'dark') ? '#444' : '#494949'; 
                 ctx.beginPath(); ctx.moveTo(sx - (w*3*scale)*0.5, sy); ctx.lineTo(sx + (w*3*scale)*0.5, sy); 
                 ctx.lineTo(nsx + (w*3*nextScale)*0.5, nsy); ctx.lineTo(nsx - (w*3*nextScale)*0.5, nsy); ctx.fill();
             }
 
-            // Rivais (Z-Index fixado)
-            d.rivals.forEach(r => {
-                let relPos = r.pos - d.pos; if(relPos < -trackLength/2) relPos += trackLength;
-                if(relPos > 0 && relPos < 4000) {
-                    const n = Math.floor(relPos / CONF.SEGMENT_LENGTH);
-                    const coord = segmentCoords[n];
-                    if(coord) this.drawKartSprite(ctx, coord.x + (r.x * (w*1.5) * coord.scale), coord.y, w*0.0055*coord.scale, 0, 0, 0, r.color, r.charId);
-                }
-            });
+            // Renderiza Rivais (Z-Order correto)
+            for(let n = CONF.DRAW_DISTANCE - 1; n >= 0; n--) {
+                const coord = segmentCoords[n]; if(!coord) continue;
+                d.rivals.forEach(r => {
+                    let relPos = r.pos - d.pos; if(relPos < -trackLength/2) relPos += trackLength;
+                    if (Math.abs(Math.floor(relPos / CONF.SEGMENT_LENGTH) - n) < 2.0 && n > 0) {
+                        this.drawKartSprite(ctx, coord.x + (r.x * (w*1.5) * coord.scale), coord.y, w*0.0055*coord.scale, 0, 0, 0, r.color, r.charId);
+                    }
+                });
+            }
 
-            // Renderização de Partículas
+            // Renderiza Partículas (Atrás do Player)
             particles.forEach(p => {
                 ctx.fillStyle = p.c; ctx.globalAlpha = p.l / p.maxL;
                 ctx.beginPath(); ctx.arc(p.x, p.y, 4 + (p.maxL - p.l)*0.5, 0, Math.PI*2); ctx.fill();
             }); ctx.globalAlpha = 1;
 
-            // Player Kart (Fidelidade Original V18)
+            // Renderiza Player
             this.drawKartSprite(ctx, cx, h*0.85 + d.bounce, w * 0.0055, d.steer, d.visualTilt, d.spinAngle, CHARACTERS[d.selectedChar].color, d.selectedChar);
         },
 
@@ -499,7 +530,8 @@
 
         renderUI: function(ctx, w, h) {
             const d = Logic;
-            // Mensagens Juice Russo One
+            
+            // Mensagens
             hudMessages = hudMessages.filter(m => m.life > 0);
             hudMessages.forEach((m, i) => {
                 ctx.save(); ctx.translate(w/2, h/2 - i*45); if(m.scale < 1) m.scale += 0.1;
@@ -509,7 +541,7 @@
                 ctx.fillText(m.text, 0, 0); ctx.restore(); m.life--;
             });
 
-            // HUD Original
+            // HUD
             const hudX = w - 80; const hudY = h - 60; 
             ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.beginPath(); ctx.arc(hudX, hudY, 55, 0, Math.PI * 2); ctx.fill();
             const rpm = Math.min(1, d.speed / CONF.TURBO_MAX_SPEED); 
@@ -519,12 +551,12 @@
             ctx.font = "bold 14px 'Russo One'"; ctx.fillText(`RANK ${d.rank}`, hudX, hudY - 35);
             ctx.fillText(`LAP ${d.lap}/${d.totalLaps}`, hudX, hudY - 20);
 
-            // BARRA DE NITRO (TOP - RESTAURADA)
+            // BARRA DE NITRO (TOP)
             ctx.fillStyle = '#111'; ctx.fillRect(w/2 - 110, 20, 220, 20);
             ctx.fillStyle = d.turboLock ? '#0ff' : (d.nitro > 25 ? '#f90' : '#f33');
             ctx.fillRect(w/2 - 108, 22, (216) * (d.nitro/100), 16);
 
-            // MINIMAPA FIEL (TODOS OS PLAYERS)
+            // MINIMAPA FIEL
             if (minimapPath.length > 0) {
                 const mapX = 25, mapY = 95, mapSize = 130;
                 ctx.fillStyle = 'rgba(0, 0, 0, 0.5)'; ctx.fillRect(mapX, mapY, mapSize, mapSize);
@@ -535,14 +567,14 @@
                 minimapPath.forEach((p, i) => { if(i===0) ctx.moveTo(p.x, p.z); else ctx.lineTo(p.x, p.z); });
                 ctx.closePath(); ctx.stroke();
                 const drawDot = (pos, c, r) => {
-                    const pt = minimapPath[Math.floor((pos/trackLength)*minimapPath.length)%minimapPath.length];
-                    if(pt){ctx.fillStyle=c; ctx.beginPath(); ctx.arc(pt.x, pt.z, r, 0, Math.PI*2); ctx.fill(); ctx.strokeStyle="#fff"; ctx.lineWidth=2; ctx.stroke();}
+                    const idx = Math.floor((pos/trackLength)*minimapPath.length)%minimapPath.length;
+                    const pt = minimapPath[idx]; if(pt){ctx.fillStyle=c; ctx.beginPath(); ctx.arc(pt.x, pt.z, r, 0, Math.PI*2); ctx.fill(); ctx.strokeStyle="#fff"; ctx.lineWidth=2; ctx.stroke();}
                 };
                 d.rivals.forEach(r => drawDot(r.pos, r.color, 10)); drawDot(d.pos, '#f00', 14);
                 ctx.restore();
             }
 
-            // Volante Gestual
+            // Volante
             if (d.virtualWheel.opacity > 0.01) {
                 ctx.save(); ctx.globalAlpha = d.virtualWheel.opacity; ctx.translate(d.virtualWheel.x, d.virtualWheel.y);
                 if (d.virtualWheel.isHigh) { ctx.shadowBlur = 25; ctx.shadowColor = '#0ff'; }
