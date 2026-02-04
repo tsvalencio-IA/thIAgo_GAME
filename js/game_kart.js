@@ -1,12 +1,12 @@
 // =============================================================================
-// KART LEGENDS: MARIO GP EDITION - PHYSICS & DYNAMICS EVOLUTION (V21)
-// ENGENHARIA SÊNIOR: FÍSICA DE MOMENTO, COLISÃO E ADERÊNCIA PROGRESIVA
+// KART LEGENDS: MARIO GP EDITION - PHYSICS & DYNAMICS EVOLUTION (V22)
+// ENGENHARIA SÊNIOR: FIDELIDADE GRÁFICA ORIGINAL + FÍSICA DE MOMENTO REAL
 // =============================================================================
 
 (function() {
 
     // -----------------------------------------------------------------
-    // 1. DADOS E CONFIGURAÇÕES DE TUNING (FÍSICA REAL)
+    // 1. DADOS E CONFIGURAÇÕES DE TUNING (FÍSICA & PERSONAGENS)
     // -----------------------------------------------------------------
     
     const CHARACTERS = [
@@ -35,13 +35,12 @@
 
     const PHYSICS = {
         gripAsphalt: 0.98,
-        gripZebra: 0.82,          // Perda de controle parcial
-        gripOffroad: 0.38,        // Perda severa de grip
-        centrifugalForce: 0.22,   // Força G real
-        momentumTransfer: 1.6,    // Multiplicador de impacto
-        offroadDecel: 0.94,       // Arrasto na grama/areia
-        vibrationZebra: 2,        // Intensidade de shake na zebra
-        vibrationOffroad: 5       // Intensidade de shake no off-road
+        gripZebra: 0.85,
+        gripOffroad: 0.40,
+        centrifugalForce: 0.22,
+        momentumTransfer: 1.6,
+        offroadDecel: 0.94,
+        steeringSensitivity: 0.12
     };
 
     let segments = [];
@@ -50,6 +49,7 @@
     let minimapBounds = {minX:0, maxX:0, minZ:0, maxZ:0, w:1, h:1};
     let hudMessages = [];
     let nitroBtn = null;
+    let particles = [];
 
     const DUMMY_SEG = { curve: 0, y: 0, color: 'light', obs: [], theme: 'grass' };
 
@@ -59,12 +59,12 @@
     }
 
     // -----------------------------------------------------------------
-    // 2. LÓGICA DO JOGO (INTEGRADA À ARQUITETURA ORIGINAL)
+    // 2. LÓGICA DO JOGO (ARQUITETURA CORE.JS COMPATÍVEL)
     // -----------------------------------------------------------------
 
     const Logic = {
         state: 'MODE_SELECT',
-        roomId: 'mario_arena_physics_v21',
+        roomId: 'mario_arena_v22',
         selectedChar: 0,
         selectedTrack: 0,
         isReady: false,
@@ -72,7 +72,7 @@
         dbRef: null,
         lastSync: 0,
 
-        // Estado Físico
+        // Estado Físico de Alta Precisão
         speed: 0, pos: 0, playerX: 0, steer: 0, targetSteer: 0,
         nitro: 100, turboLock: false,
         spinAngle: 0, spinTimer: 0, lateralInertia: 0, vibration: 0,
@@ -101,7 +101,7 @@
             this.speed = 0; this.pos = 0; this.playerX = 0; this.steer = 0;
             this.lap = 1; this.score = 0; this.nitro = 100;
             this.spinTimer = 0; this.lateralInertia = 0; this.spinAngle = 0;
-            this.rivals = []; hudMessages = [];
+            this.rivals = []; hudMessages = []; particles = [];
         },
 
         setupUI: function() {
@@ -231,7 +231,7 @@
         },
 
         // =================================================================
-        // CICLO DE UPDATE (FÍSICA PURA)
+        // CICLO DE UPDATE (FÍSICA SÊNIOR)
         // =================================================================
 
         update: function(ctx, w, h, pose) {
@@ -271,7 +271,6 @@
 
             const char = CHARACTERS[this.selectedChar];
             const sens = PHYSICS.steeringSensitivity / Math.sqrt(char.weight);
-            // Suavização e retorno ao centro
             this.steer += (this.targetSteer - this.steer) * sens;
         },
 
@@ -279,7 +278,7 @@
             const char = CHARACTERS[this.selectedChar];
             const absX = Math.abs(this.playerX);
             
-            // 1. Atrito e Grip Real (Mecânica de Terreno)
+            // 1. Detecção de Terreno e Grip Real
             let currentGrip = PHYSICS.gripAsphalt;
             let currentDrag = CONF.FRICTION_AIR;
             this.vibration = 0;
@@ -287,15 +286,14 @@
             if (absX > 1.45) { // Offroad
                 currentGrip = PHYSICS.gripOffroad;
                 currentDrag = PHYSICS.offroadDecel;
-                this.vibration = PHYSICS.vibrationOffroad;
+                this.vibration = 5;
                 if(this.speed > 55) this.speed *= 0.985;
             } else if (absX > 1.0) { // Zebra
                 currentGrip = PHYSICS.gripZebra;
-                this.vibration = PHYSICS.vibrationZebra;
-                // Zebra não desacelera drasticamente no asfalto
+                this.vibration = 2;
             }
 
-            // 2. Velocidade e Aceleração
+            // 2. Aceleração e Velocidade
             let max = CONF.MAX_SPEED * char.speedInfo;
             if(this.turboLock && this.nitro > 0) { 
                 max = CONF.TURBO_MAX_SPEED; this.nitro -= 0.6; 
@@ -309,27 +307,26 @@
             }
             this.speed *= currentDrag;
 
-            // 3. Inércia Lateral (Zero Auto-Steer)
+            // 3. Inércia Lateral (ZERO AUTO-STEER)
             const seg = getSegment(this.pos / CONF.SEGMENT_LENGTH);
             const ratio = this.speed / CONF.MAX_SPEED;
             
-            // Centrífuga empurra para fora; TurnForce puxa para dentro baseado no input
             const centrifugal = -(seg.curve * (ratio ** 2)) * PHYSICS.centrifugalForce * char.weight;
             const turnForce = this.steer * char.turnInfo * currentGrip * ratio;
 
-            // Integração da força total na inércia (Impede que o kart "grude" ou "puxe" sozinho)
+            // Inércia acumulada (O kart não volta sozinho)
             const forceTotal = turnForce + centrifugal;
             this.lateralInertia = (this.lateralInertia * 0.91) + (forceTotal * 0.09);
             this.playerX += this.lateralInertia;
 
-            // 4. Mecânica de Spin (Rodada em curva fechada ou colisão)
+            // 4. Mecânica de Spin (Rodada)
             if(this.spinTimer > 0) {
                 this.spinTimer--; this.spinAngle += 0.4; this.speed *= 0.96;
             } else if(absX > 1.6 && ratio > 0.82 && Math.abs(this.lateralInertia) > 0.16) {
                 this.spinTimer = 45; window.Sfx.play(200, 'sawtooth', 0.2, 0.1); this.pushMsg("RODOU!");
             }
 
-            // 5. Colisão (Transferência de Momento real entre Karts)
+            // 5. Colisão Dinâmica (Transferência de Momento)
             this.rivals.forEach(r => {
                 let distZ = r.pos - this.pos;
                 if(distZ > trackLength/2) distZ -= trackLength;
@@ -341,7 +338,6 @@
                     const rChar = CHARACTERS[r.charId] || char;
                     const weightFactor = rChar.weight / char.weight;
                     
-                    // Empuxo lateral baseado no peso do oponente
                     const push = (distX > 0 ? -0.12 : 0.12) * impact * weightFactor;
                     this.lateralInertia += push;
                     this.speed *= 0.9;
@@ -350,7 +346,6 @@
                 }
             });
 
-            // Restrições de Pista
             this.playerX = Math.max(-3.6, Math.min(3.6, this.playerX));
             this.pos += this.speed;
             if(this.pos >= trackLength) { this.pos -= trackLength; this.lap++; }
@@ -362,7 +357,7 @@
         },
 
         // =================================================================
-        // RENDERIZAÇÃO (PRESERVANDO ARQUITETURA ORIGINAL)
+        // RENDERIZAÇÃO (RESTAURAÇÃO TOTAL DO ESTILO ORIGINAL)
         // =================================================================
 
         renderWorld: function(ctx, w, h) {
@@ -393,12 +388,12 @@
 
                 segmentCoords.push({ x, y: sy, scale });
 
-                // Zebra
+                // Zebra Original (Trapezoidal)
                 ctx.fillStyle = seg.color === 'dark' ? '#f33' : '#fff';
                 ctx.beginPath(); ctx.moveTo(x - rw*0.6, sy); ctx.lineTo(x + rw*0.6, sy);
                 ctx.lineTo(nx + nrw*0.6, nsy); ctx.lineTo(nx - nrw*0.6, nsy); ctx.fill();
 
-                // Pista
+                // Pista Original
                 ctx.fillStyle = seg.color === 'dark' ? '#444' : '#494949';
                 ctx.beginPath(); ctx.moveTo(x - rw*0.5, sy); ctx.lineTo(x + rw*0.5, sy);
                 ctx.lineTo(nx + nrw*0.5, nsy); ctx.lineTo(nx - nrw*0.5, nsy); ctx.fill();
@@ -412,29 +407,68 @@
                     const n = relPos / CONF.SEGMENT_LENGTH;
                     const coord = segmentCoords[Math.floor(n)];
                     if(coord) {
-                        const rx = coord.x + ((r.x - this.playerX) * (w*1.5) * coord.scale);
-                        this.drawKartSprite(ctx, rx, coord.y, w*0.0055*coord.scale, 0, 0, 0, r.color, r.charId);
+                        const rx = coord.x + (r.x * (w * 1.5) * coord.scale);
+                        this.drawKartSprite(ctx, rx, coord.y, w*0.0055*coord.scale, 0, 0, 0, r.color, r.charId, true);
                     }
                 }
             });
 
-            // Player Kart (Render Original Resgatado)
-            this.drawKartSprite(ctx, cx, h*0.85 + this.bounce, w*0.0055, this.steer, this.visualTilt, this.spinAngle, CHARACTERS[this.selectedChar].color, this.selectedChar);
+            // Player Kart (Render Original 1:1)
+            this.drawKartSprite(ctx, cx, h*0.85 + this.bounce, w*0.0055, this.steer, this.visualTilt, this.spinAngle, CHARACTERS[this.selectedChar].color, this.selectedChar, false);
         },
 
-        drawKartSprite: function(ctx, x, y, s, steer, tilt, spin, color, charId) {
-            ctx.save(); ctx.translate(x, y); ctx.scale(s, s); ctx.rotate(tilt * 0.02 + spin);
-            ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(0, 30, 55, 15, 0, 0, 7); ctx.fill();
-            ctx.fillStyle = color; ctx.fillRect(-30, -25, 60, 45); 
-            ctx.fillStyle = '#111'; ctx.fillRect(-45, -20, 15, 30); ctx.fillRect(30, -20, 15, 30);
-            ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, -15, 18, 0, 7); ctx.fill();
-            ctx.fillStyle = '#000'; ctx.font='bold 12px Arial'; ctx.textAlign='center'; 
-            ctx.fillText(CHARACTERS[charId]?.name[0] || 'M', 0, -10);
-            ctx.restore();
+        drawKartSprite: function(ctx, cx, y, carScale, steer, tilt, spinAngle, color, charId, isRival) {
+            ctx.save(); 
+            ctx.translate(cx, y); 
+            ctx.scale(carScale, carScale);
+            ctx.rotate(tilt * 0.02 + spinAngle);
+            
+            // Sombra
+            ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.beginPath(); ctx.ellipse(0, 35, 60, 15, 0, 0, Math.PI*2); ctx.fill();
+            
+            const stats = CHARACTERS[charId] || CHARACTERS[0];
+            const hatColor = stats.hat;
+            
+            // Corpo (Gradiente Original)
+            const gradBody = ctx.createLinearGradient(-30, 0, 30, 0); 
+            gradBody.addColorStop(0, color); gradBody.addColorStop(0.5, '#fff'); gradBody.addColorStop(1, color);
+            ctx.fillStyle = gradBody; 
+            ctx.beginPath(); ctx.moveTo(-25, -30); ctx.lineTo(25, -30); ctx.lineTo(40, 10); ctx.lineTo(10, 35); ctx.lineTo(-10, 35); ctx.lineTo(-40, 10); ctx.fill();
+            
+            // Rodas (Rotação Original)
+            const wheelAngle = steer * 0.8; 
+            const dw = (wx, wy) => { 
+                ctx.save(); ctx.translate(wx, wy); ctx.rotate(wheelAngle); 
+                ctx.fillStyle = '#111'; ctx.fillRect(-12, -15, 24, 30); 
+                ctx.fillStyle = '#666'; ctx.fillRect(-5, -5, 10, 10); 
+                ctx.restore(); 
+            };
+            dw(-45, 15); dw(45, 15); ctx.fillStyle='#111'; ctx.fillRect(-50, -25, 20, 30); ctx.fillRect(30, -25, 20, 30);
+            
+            // Motorista (Estilo Nintendo Original)
+            ctx.save(); ctx.translate(0, -10); ctx.rotate(steer * 0.3); 
+            ctx.fillStyle = '#ffccaa'; // Pele
+            ctx.beginPath(); ctx.arc(0, -20, 18, 0, Math.PI*2); ctx.fill(); 
+            ctx.fillStyle = hatColor; // Chapéu
+            ctx.beginPath(); ctx.arc(0, -25, 18, Math.PI, 0); ctx.fill();
+            ctx.fillRect(-22, -25, 44, 8);
+            
+            // Símbolo no Boné (Círculo Branco + Letra)
+            ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, -32, 6, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#000'; ctx.font='bold 8px Arial'; ctx.textAlign='center'; 
+            ctx.fillText(stats.name[0], 0, -29);
+            
+            if (isRival) {
+                ctx.fillStyle = '#0f0'; ctx.font='bold 12px Arial'; ctx.textAlign='center'; ctx.fillText('CPU', 0, -50);
+            } else {
+                ctx.fillStyle = 'red'; ctx.font='bold 12px Arial'; ctx.textAlign='center'; ctx.fillText('EU', 0, -50);
+            }
+            ctx.restore(); 
+            ctx.restore(); 
         },
 
         renderHUD: function(ctx, w, h) {
-            // Velocímetro
+            // Velocímetro Estilo Russo One
             ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.beginPath(); ctx.arc(w-75, h-75, 55, 0, 7); ctx.fill();
             ctx.fillStyle = '#fff'; ctx.textAlign='center'; ctx.font="bold 30px Russo One"; ctx.fillText(Math.floor(this.speed), w-75, h-70);
             ctx.font="10px Arial"; ctx.fillText("KM/H", w-75, h-50);
@@ -443,7 +477,7 @@
             ctx.fillStyle = '#111'; ctx.fillRect(w/2 - 100, 20, 200, 15);
             ctx.fillStyle = this.turboLock ? '#0ff' : '#f90'; ctx.fillRect(w/2 - 98, 22, 196 * (this.nitro/100), 11);
 
-            // Minimapa
+            // Minimapa Original
             if (minimapPath.length > 0) {
                 const ms = 110; ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(20, 80, ms, ms);
                 ctx.save(); ctx.translate(20 + ms/2, 80 + ms/2); ctx.scale(0.35, 0.35);
@@ -497,6 +531,9 @@
         }
     };
 
-    if(window.System) window.System.registerGame('kart', 'Kart Legends', '🏎️', Logic, { camOpacity: 0.1 });
+    // REGISTRO NO ENGINE CORE (ID 'drive' para compatibilidade com core.js)
+    if(window.System) {
+        window.System.registerGame('drive', 'Kart Legends', '🏎️', Logic, { camOpacity: 0.1 });
+    }
 
 })();
