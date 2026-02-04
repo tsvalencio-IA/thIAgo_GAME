@@ -67,7 +67,8 @@
         minimapPath = [];
         let x = 0, z = 0, angle = 0;
         segments.forEach(seg => {
-            angle -= seg.curve * 0.035; 
+            // Ajuste fino do coeficiente para melhorar a precisão visual do traçado
+            angle -= seg.curve * 0.04; 
             x += Math.sin(angle) * 8; 
             z -= Math.cos(angle) * 8;
             minimapPath.push({ x, z });
@@ -411,7 +412,10 @@
                     } else {
                         // Comportamento normal
                         const targetSpeed = (CONF.MAX_SPEED * rChar.speedInfo) - (Math.abs(rSeg.curve) * 15); 
-                        if (r.speed < targetSpeed) r.speed += rChar.accel * 0.85;
+                        
+                        // CORREÇÃO IA PARADA: Launch Control / Boost inicial se estiver muito lento
+                        if (r.speed < 50 && r.pos < 2000) r.speed += rChar.accel * 3; // Arrancada forte
+                        else if (r.speed < targetSpeed) r.speed += rChar.accel * 0.85;
                         
                         // Traçado ideal (Ligeiramente fora do centro nas curvas)
                         const idealX = -(rSeg.curve * 0.45); 
@@ -544,9 +548,8 @@
                 
                 segmentCoords.push({ x: sx, y: sy, scale });
 
-                // Renderiza segmentos individuais (respeitando se for zebra/obs)
-                // Se o tema do segmento divergir do global (erro de carregamento), força o global visualmente para consistência
-                const drawTheme = themes[seg.theme] || theme;
+                // CORREÇÃO CENÁRIOS MISTURADOS: Força o tema global em todos os segmentos
+                const drawTheme = theme; 
                 
                 ctx.fillStyle = (seg.color === 'dark') ? (isOffRoad?'#336622':drawTheme[1]) : (isOffRoad?'#336622':drawTheme[0]);
                 ctx.fillRect(0, nsy, w, sy - nsy);
@@ -670,8 +673,8 @@
                 ctx.save(); ctx.globalAlpha = d.virtualWheel.opacity; ctx.translate(d.virtualWheel.x, d.virtualWheel.y);
                 if (d.virtualWheel.isHigh) { ctx.shadowBlur = 25; ctx.shadowColor = '#0ff'; }
                 
-                // Rotaciona conforme o steer
-                ctx.rotate(d.steer * 1.4);
+                // Rotaciona conforme o steer - CORREÇÃO: Reduzido para não "virar muito" visualmente
+                ctx.rotate(d.steer * 0.6);
                 
                 // 1. Aro Principal Preto (Grosso)
                 ctx.beginPath();
