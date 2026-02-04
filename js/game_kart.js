@@ -40,7 +40,7 @@
         gripOffroad: 0.35,
         centrifugalForce: 0.22,
         momentumTransfer: 1.6,
-        steerSensitivity: 0.15, // Aumentado levemente para resposta melhor
+        steerSensitivity: 0.15,
         lateralInertiaDecay: 0.92
     };
 
@@ -57,7 +57,6 @@
 
     function getSegment(index) {
         if (!segments || segments.length === 0) return DUMMY_SEG;
-        // Garante que o índice seja tratado corretamente para evitar leitura de lixo
         const len = segments.length;
         const i = ((Math.floor(index) % len) + len) % len;
         return segments[i] || DUMMY_SEG;
@@ -68,7 +67,6 @@
         minimapPath = [];
         let x = 0, z = 0, angle = 0;
         segments.forEach(seg => {
-            // Invertemos o sinal da curva (seg.curve) para que Esquerda seja Esquerda no mapa
             angle -= seg.curve * 0.035; 
             x += Math.sin(angle) * 8; 
             z -= Math.cos(angle) * 8;
@@ -128,7 +126,7 @@
             this.spinAngle = 0; this.spinTimer = 0;
             this.lateralInertia = 0; this.vibration = 0;
             this.inputActive = false;
-            // Limpeza total para evitar "Cenários Misturados" (Correção 1)
+            // Limpeza total para evitar "Cenários Misturados"
             segments = []; minimapPath = [];
             this.rivals = []; particles = []; hudMessages = [];
         },
@@ -173,6 +171,11 @@
                     else if (y < 0.35) { this.selectedChar = (this.selectedChar + 1) % CHARACTERS.length; window.Sfx.hover(); }
                     else { this.selectedTrack = (this.selectedTrack + 1) % TRACKS.length; window.Sfx.hover(); }
                     if(this.isOnline) this.syncLobby();
+                } else if (this.state === 'GAMEOVER') {
+                    // Clique para reiniciar após fim de jogo
+                     this.state = 'LOBBY';
+                     this.resetPhysics();
+                     window.Sfx.click();
                 }
             };
         },
@@ -211,10 +214,10 @@
             this.resetPhysics();
             this.isOnline = (mode === 'ONLINE' && !!window.DB);
             if (!this.isOnline) {
-                // Bots iniciais
+                // Bots iniciais - Ajustados para garantir que corram
                 this.rivals = [
-                    { id:'cpu1', charId:3, pos: 1200, x:-0.6, speed:0, color: CHARACTERS[3].color, name:'Bowser', lap: 1, errorTimer: 0 },
-                    { id:'cpu2', charId:4, pos: 600, x:0.6, speed:0, color: CHARACTERS[4].color, name:'Toad', lap: 1, errorTimer: 0 }
+                    { id:'cpu1', charId:3, pos: 0, x:-0.6, speed:0, color: CHARACTERS[3].color, name:'Bowser', lap: 1, errorTimer: 0 },
+                    { id:'cpu2', charId:4, pos: 0, x:0.6, speed:0, color: CHARACTERS[4].color, name:'Toad', lap: 1, errorTimer: 0 }
                 ];
             } else {
                 this.connectMultiplayer();
@@ -258,6 +261,11 @@
             nitroBtn.style.display = 'flex';
             this.pushMsg("LARGADA!", "#0f0", 60);
             window.Sfx.play(600, 'square', 0.5, 0.2);
+            
+            // Garante que os rivais comecem do zero na nova pista
+            if (!this.isOnline) {
+                 this.rivals.forEach(r => { r.pos = 0; r.speed = 0; r.lap = 1; });
+            }
         },
 
         spawnParticle: function(x, y, type) {
@@ -302,6 +310,10 @@
 
         updatePhysics: function(w, h, pose) {
             const d = Logic;
+            
+            // Se o jogo acabou, não atualiza física de movimento
+            if (d.state === 'GAMEOVER') return;
+
             const char = CHARACTERS[this.selectedChar];
 
             // 1. INPUT E PARADA AUTOMÁTICA
@@ -337,7 +349,7 @@
                 d.virtualWheel.opacity *= 0.9; 
                 d.turboLock = false;
             }
-            // Suavização do Steer (Melhora sensação de controle)
+            // Suavização do Steer
             d.steer += (d.targetSteer - d.steer) * (PHYSICS.steerSensitivity / Math.sqrt(char.weight));
 
             // 2. FÍSICA DE TERRENO
@@ -456,16 +468,26 @@
 
             d.playerX = Math.max(-3.5, Math.min(3.5, d.playerX));
             d.pos += d.speed;
+
+            // --- CORREÇÃO FINALIZAÇÃO DE CORRIDA ---
             if (d.pos >= trackLength) { 
-                d.pos -= trackLength; d.lap++; 
-                if(d.lap <= d.totalLaps) this.pushMsg(`VOLTA ${d.lap}/${d.totalLaps}`, "#fff", 60); 
+                d.pos -= trackLength; 
+                d.lap++; 
+                if (d.lap > d.totalLaps) {
+                    d.lap = d.totalLaps;
+                    d.state = 'GAMEOVER';
+                    window.Sfx.play(1000, 'sine', 1, 0.5);
+                    this.pushMsg(d.rank === 1 ? "VITÓRIA!" : "FIM DE JOGO", "#ff0", 80);
+                    nitroBtn.style.display = 'none';
+                } else {
+                    this.pushMsg(`VOLTA ${d.lap}/${d.totalLaps}`, "#fff", 60); 
+                }
             }
             
             // --- CORREÇÃO 4: KART TOMBANDO E NÃO VIRANDO ---
-            // Reduzimos o multiplicador de tilt para evitar a sensação de "tombar"
-            const targetTilt = (d.steer * 8) + (d.spinAngle * 10); // Era 15, agora 8 (mais estável)
-            d.visualTilt += (targetTilt - d.visualTilt) * 0.15; // Resposta mais rápida
-            d.visualTilt = Math.max(-12, Math.min(12, d.visualTilt)); // Clamp reduzido de 25 para 12 graus
+            const targetTilt = (d.steer * 8) + (d.spinAngle * 10); 
+            d.visualTilt += (targetTilt - d.visualTilt) * 0.15; 
+            d.visualTilt = Math.max(-12, Math.min(12, d.visualTilt)); 
 
             d.bounce = (Math.random() - 0.5) * d.vibration;
             d.score += d.speed * 0.01;
@@ -499,10 +521,11 @@
             for(let i=0; i<=12; i++) { ctx.lineTo((w/12 * i) - (bgOffset * 0.5), horizon - 50 - Math.abs(Math.sin(i + d.pos*0.0001))*40); }
             ctx.lineTo(w, horizon); ctx.fill();
 
-            // Correção 1: Garantia do tema correto
+            // Correção 1: Garantia do tema correto (Mistura de Cenários)
+            // Usa o tema global da pista selecionada para o chão infinito, ignorando bugs de segmentação
             const themes = { 'grass': ['#55aa44', '#448833'], 'sand':  ['#f1c40f', '#e67e22'], 'snow':  ['#ffffff', '#dfe6e9'] };
-            const segTheme = getSegment(currentSegIndex).theme;
-            const theme = themes[segTheme] ? themes[segTheme] : themes['grass']; 
+            const globalThemeName = TRACKS[d.selectedTrack].theme; // Força o tema da pista inteira
+            const theme = themes[globalThemeName] || themes['grass']; 
             
             ctx.fillStyle = isOffRoad ? '#336622' : theme[1]; ctx.fillRect(0, horizon, w, h-horizon);
 
@@ -521,7 +544,10 @@
                 
                 segmentCoords.push({ x: sx, y: sy, scale });
 
-                const drawTheme = themes[seg.theme] || themes['grass'];
+                // Renderiza segmentos individuais (respeitando se for zebra/obs)
+                // Se o tema do segmento divergir do global (erro de carregamento), força o global visualmente para consistência
+                const drawTheme = themes[seg.theme] || theme;
+                
                 ctx.fillStyle = (seg.color === 'dark') ? (isOffRoad?'#336622':drawTheme[1]) : (isOffRoad?'#336622':drawTheme[0]);
                 ctx.fillRect(0, nsy, w, sy - nsy);
                 
@@ -595,6 +621,14 @@
                 ctx.fillText(m.text, 0, 0); ctx.restore(); m.life--;
             });
 
+            if (d.state === 'GAMEOVER') {
+                ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0,0,w,h);
+                ctx.fillStyle = '#fff'; ctx.font = "bold 50px 'Russo One'"; ctx.textAlign = 'center';
+                ctx.fillText(d.rank === 1 ? "VENCEDOR!" : "FIM DE JOGO", w/2, h/2);
+                ctx.font = "20px 'Russo One'"; ctx.fillText("Toque para voltar ao menu", w/2, h/2 + 50);
+                return; // Não desenha o resto da UI
+            }
+
             const hudX = w - 80; const hudY = h - 60; 
             ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.beginPath(); ctx.arc(hudX, hudY, 55, 0, Math.PI * 2); ctx.fill();
             const rpm = Math.min(1, d.speed / CONF.TURBO_MAX_SPEED); 
@@ -625,50 +659,65 @@
                         ctx.fill(); ctx.strokeStyle="#fff"; ctx.lineWidth=2; ctx.stroke();
                     }
                 };
-                d.rivals.forEach(r => drawDot(r.pos, r.color, 10)); drawDot(d.pos, '#f00', 14);
+                // Correção IA Minimapa: Pontos maiores e garantindo render
+                d.rivals.forEach(r => drawDot(r.pos, '#ffcc00', 16)); // Amarelo Neon, maior
+                drawDot(d.pos, '#f00', 16);
                 ctx.restore();
             }
 
-            // --- CORREÇÃO 5: VOLANTE VIRTUAL ESPORTIVO (ESTILO F1) ---
+            // --- CORREÇÃO 5: VOLANTE VIRTUAL REDONDO (Estilo Imagem) ---
             if (d.virtualWheel.opacity > 0.01) {
                 ctx.save(); ctx.globalAlpha = d.virtualWheel.opacity; ctx.translate(d.virtualWheel.x, d.virtualWheel.y);
                 if (d.virtualWheel.isHigh) { ctx.shadowBlur = 25; ctx.shadowColor = '#0ff'; }
                 
-                // Desenho estilo "Borboleta" / F1
+                // Rotaciona conforme o steer
                 ctx.rotate(d.steer * 1.4);
                 
-                // Corpo principal
-                ctx.fillStyle = '#222'; 
-                ctx.strokeStyle = '#444';
-                ctx.lineWidth = 3;
-                
+                // 1. Aro Principal Preto (Grosso)
                 ctx.beginPath();
-                // Base retangular arredondada
-                ctx.moveTo(-50, -30); ctx.lineTo(50, -30); // Topo
-                ctx.quadraticCurveTo(60, -30, 60, -10); // Curva Dir Top
-                ctx.lineTo(55, 30); // Lado Dir
-                ctx.quadraticCurveTo(50, 45, 30, 45); // Curva Dir Bot
-                ctx.lineTo(-30, 45); // Base
-                ctx.quadraticCurveTo(-50, 45, -55, 30); // Curva Esq Bot
-                ctx.lineTo(-60, -10); // Lado Esq
-                ctx.quadraticCurveTo(-60, -30, -50, -30); // Curva Esq Top
-                ctx.fill(); ctx.stroke();
+                ctx.arc(0, 0, d.virtualWheel.r, 0, Math.PI * 2);
+                ctx.lineWidth = 18;
+                ctx.strokeStyle = '#2d3436'; // Preto Fosco
+                ctx.stroke();
 
-                // Handles (Pegas)
-                ctx.fillStyle = '#333';
-                ctx.fillRect(-62, -5, 12, 40); // Pega Esq
-                ctx.fillRect(50, -5, 12, 40); // Pega Dir
+                // 2. Detalhe Vermelho (Topo e Base)
+                ctx.beginPath();
+                ctx.arc(0, 0, d.virtualWheel.r, -Math.PI * 0.25, -Math.PI * 0.75, true); // Topo
+                ctx.lineWidth = 18;
+                ctx.strokeStyle = '#d63031'; // Vermelho Esportivo
+                ctx.stroke();
 
-                // Marcador Central
-                ctx.fillStyle = '#ff3300'; 
-                ctx.fillRect(-5, -30, 10, 15);
-                
-                // Display Digital
-                ctx.fillStyle = '#000';
-                ctx.fillRect(-25, -10, 50, 25);
-                ctx.fillStyle = '#0f0';
-                ctx.font = 'bold 12px Courier'; ctx.textAlign = 'center';
-                ctx.fillText(Math.floor(d.speed), 0, 8);
+                ctx.beginPath();
+                ctx.arc(0, 0, d.virtualWheel.r, Math.PI * 0.25, Math.PI * 0.75, false); // Base
+                ctx.strokeStyle = '#d63031';
+                ctx.stroke();
+
+                // 3. Miolo Prata (Raio Central)
+                ctx.beginPath();
+                ctx.moveTo(-d.virtualWheel.r + 10, 0);
+                ctx.lineTo(d.virtualWheel.r - 10, 0);
+                ctx.moveTo(0, 0);
+                ctx.lineTo(0, d.virtualWheel.r - 10);
+                ctx.lineWidth = 12;
+                ctx.strokeStyle = '#bdc3c7'; // Prata
+                ctx.lineCap = 'round';
+                ctx.stroke();
+
+                // 4. Centro (Botão da Buzina)
+                ctx.beginPath();
+                ctx.arc(0, 0, 18, 0, Math.PI * 2);
+                ctx.fillStyle = '#2d3436';
+                ctx.fill();
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#bdc3c7';
+                ctx.stroke();
+
+                // Logo Central
+                ctx.fillStyle = '#d63031';
+                ctx.font = 'bold 10px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText("GT", 0, 1);
 
                 ctx.restore();
             }
